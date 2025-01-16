@@ -4,24 +4,25 @@ import (
 	"awesomeProject1/Internal/entity"
 	"awesomeProject1/Internal/repository"
 	"context"
-	"fmt"
+	_ "errors"
+	_ "fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type OrderService interface {
-	CreatedOrder(ctx context.Context, userID string, products []string, price float64, DeliveryTyoe entity.DType, AddressID string) *entity.Order
-	UpdateOrderStatus(ctx context.Context, userID, orderID string) error
-	GetOrders(ctx context.Context, userID string, limit, offset int, asc bool) ([]entity.Order, error)
+	CreatedOrder(ctx context.Context, req *entity.CreateOrderRequest) (*entity.Order, error)
+	UpdateOrderStatus(ctx context.Context, orderStatus entity.OrderStatus, orderID string, cancel bool) error
+	GetOrders(ctx context.Context, req1 *entity.GetOrders) ([]entity.Order, error)
 }
 
 type service struct {
 	repo repository.DB
 }
 
-func (s *service) CreateOrder(ctx context.Context, userID string, products []string, price float64, deliveryType entity.DType, addressID string) (*entity.Order, error) {
-	for _, p := range products {
+func (s *service) CreateOrder(ctx context.Context, req *entity.CreateOrderRequest) (*entity.Order, error) {
+	for _, p := range req.Products {
 		ok, err := s.repo.ProductExist(ctx, p)
 		if err != nil {
 			return nil, err
@@ -36,13 +37,13 @@ func (s *service) CreateOrder(ctx context.Context, userID string, products []str
 
 	order := entity.Order{
 		ID:           uuid.New().String(),
-		UserID:       userID,
-		ProductIDs:   products,
+		UserID:       req.UserID,
+		ProductIDs:   req.Products,
 		CreatedAt:    now,
 		UpdatedAt:    now,
-		Price:        price,
-		DeliveryType: deliveryType,
-		Address:      addressID,
+		Price:        req.Price,
+		DeliveryType: req.DeliveryType,
+		Address:      req.AddressID,
 		OrderStatus:  entity.Created,
 	}
 
@@ -54,30 +55,40 @@ func (s *service) CreateOrder(ctx context.Context, userID string, products []str
 	return &order, nil
 }
 
-func (s *service) UpdateOrderStatus(ctx context.Context, userID, orderID string) error {
+func (s *service) UpdateOrderStatus(ctx context.Context, userID, orderID string, cancel bool) error {
 	order, err := s.repo.GetOrderByID(ctx, orderID)
+	if err != nil {
+
+		return err
+	}
+
+	if cancel {
+		if order.OrderStatus == entity.Delivery || order.OrderStatus == entity.Done {
+			return entity.OrderCannotBeCancelled
+		}
+
+		order.OrderStatus = entity.Cancelled
+	}
+
+	err = s.repo.UpdateOrder(ctx, order)
 	if err != nil {
 		return err
 	}
 
-	switch order.OrderStatus {
-	case entity.Created:
-		order.OrderStatus = entity.Paid
-	case entity.Paid:
-		order.OrderStatus = entity.Collect
-	case entity.Collect:
-		order.OrderStatus = entity.Collected
-	case entity.Collected:
-		order.OrderStatus = entity.Delivery
-	case entity.Delivery:
-		order.OrderStatus = entity.Done
-	default:
-		fmt.Println("error with status")
+	var statusMove = map[entity.OrderStatus]entity.OrderStatus{
+		entity.Created:   entity.Paid,
+		entity.Paid:      entity.Collect,
+		entity.Collect:   entity.Collected,
+		entity.Collected: entity.Delivery,
+		entity.Delivery:  entity.Done,
 	}
 
-	if order.OrderStatus == entity.Cancelled && (order.OrderStatus == entity.Delivery || order.OrderStatus == entity.Done) {
-		return entity.ErrOrderCannotBeCancelled
+	nextStatus, exists := statusMove[order.OrderStatus]
+	if !exists {
+		return entity.InvalidStatus
 	}
+
+	order.OrderStatus = nextStatus
 
 	err = s.repo.UpdateOrder(ctx, order)
 	if err != nil {
@@ -86,7 +97,11 @@ func (s *service) UpdateOrderStatus(ctx context.Context, userID, orderID string)
 
 	return nil
 }
+func (s *service) GetOrders(ctx context.Context, req *entity.GetOrders) ([]entity.Order, error) {
+	orders, err := s.repo.GetOrders(ctx, req)
+	if err != nil {
+		return nil, err
+	}
 
-func (s *service) GetOrders(ctx context.Context, userID string, limit, offset int, asc bool) ([]entity.Order, error) {
-
+	return orders, nil
 }
