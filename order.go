@@ -36,3 +36,18 @@ type Order struct {
 	Address          string
 	OrderStatus      OrderStatus
 }
+
+type CreateOrderRequest struct {
+	UserID       string
+	Products     []string
+	Price        float64
+	DeliveryType DType
+	AddressID    string
+}
+
+type GetOrders struct {
+	userID string
+	limit  int
+	offset int
+	asc    bool
+}
